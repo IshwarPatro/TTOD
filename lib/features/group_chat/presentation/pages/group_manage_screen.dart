@@ -151,17 +151,21 @@ class GroupManageScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(color: AppColors.outline),
                             ),
-                            child: QrImageView(
-                              data: group.inviteLink,
-                              version: QrVersions.auto,
-                              size: 160,
-                              eyeStyle: const QrEyeStyle(
-                                eyeShape: QrEyeShape.square,
-                                color: AppColors.primaryAccent,
-                              ),
-                              dataModuleStyle: const QrDataModuleStyle(
-                                dataModuleShape: QrDataModuleShape.square,
-                                color: AppColors.primaryAccent,
+                            child: SizedBox(
+                              width: 160,
+                              height: 160,
+                              child: QrImageView(
+                                data: group.inviteLink,
+                                version: QrVersions.auto,
+                                size: 160,
+                                eyeStyle: const QrEyeStyle(
+                                  eyeShape: QrEyeShape.square,
+                                  color: AppColors.primaryAccent,
+                                ),
+                                dataModuleStyle: const QrDataModuleStyle(
+                                  dataModuleShape: QrDataModuleShape.square,
+                                  color: AppColors.primaryAccent,
+                                ),
                               ),
                             ),
                           ),

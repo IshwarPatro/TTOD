@@ -22,6 +22,7 @@ class GroupChatRepository {
   static const int maxRequestsPerHour = 10;
 
   final FirebaseFirestore? _firestore;
+  bool _fallbackToLocal = false;
 
   // In-memory rate-limit trackers (per user)
   final Map<String, List<DateTime>> _messageTimestamps = {};
@@ -49,7 +50,20 @@ class GroupChatRepository {
     }
   }
 
-  bool get isFirebaseEnabled => _firestore != null;
+  bool get isFirebaseEnabled => _firestore != null && !_fallbackToLocal;
+
+  bool _shouldUseFirestoreFor(String? userId) {
+    if (!isFirebaseEnabled) return false;
+    if (userId == 'local_offline_user') return false;
+    return true;
+  }
+
+  void _activateLocalFallback() {
+    if (!_fallbackToLocal) {
+      _fallbackToLocal = true;
+      _notifyLocal();
+    }
+  }
 
   static String friendInviteLink(String userId) => "https://ttod.app/friend/$userId";
 
@@ -115,55 +129,54 @@ class GroupChatRepository {
 
   // ==================== GROUPS ====================
 
-  Stream<List<ChatGroup>> watchMyGroups(String userId) {
-    if (isFirebaseEnabled) {
-      return _firestore!
-          .collection('groups')
-          .where('memberIds', arrayContains: userId)
-          .snapshots()
-          .map((snap) {
-        final groups = snap.docs
-            .map((d) => ChatGroup.fromMap(d.id, d.data()))
-            .toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        return groups;
-      });
-    }
+  Stream<List<ChatGroup>> watchMyGroups(String userId) async* {
+    List<ChatGroup> currentLocal() => _localGroups.values
+        .where((g) => g.isMember(userId))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-    Stream<List<ChatGroup>> emitLocal() async* {
-      List<ChatGroup> current() => _localGroups.values
-          .where((g) => g.isMember(userId))
-          .toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-      yield current();
-      await for (final _ in _localChangeController.stream) {
-        yield current();
+    if (_shouldUseFirestoreFor(userId)) {
+      try {
+        await for (final snap in _firestore!
+            .collection('groups')
+            .where('memberIds', arrayContains: userId)
+            .snapshots()) {
+          final groups = snap.docs
+              .map((d) => ChatGroup.fromMap(d.id, d.data()))
+              .toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          yield groups;
+        }
+        return;
+      } catch (_) {
+        _activateLocalFallback();
       }
     }
 
-    return emitLocal();
+    yield currentLocal();
+    await for (final _ in _localChangeController.stream) {
+      yield currentLocal();
+    }
   }
 
-  Stream<ChatGroup?> watchGroup(String groupId) {
-    if (isFirebaseEnabled) {
-      return _firestore!
-          .collection('groups')
-          .doc(groupId)
-          .snapshots()
-          .map((doc) => doc.exists && doc.data() != null
+  Stream<ChatGroup?> watchGroup(String groupId) async* {
+    if (isFirebaseEnabled && !_localGroups.containsKey(groupId)) {
+      try {
+        await for (final doc in _firestore!.collection('groups').doc(groupId).snapshots()) {
+          yield doc.exists && doc.data() != null
               ? ChatGroup.fromMap(doc.id, doc.data()!)
-              : null);
-    }
-
-    Stream<ChatGroup?> emitLocal() async* {
-      yield _localGroups[groupId];
-      await for (final _ in _localChangeController.stream) {
-        yield _localGroups[groupId];
+              : null;
+        }
+        return;
+      } catch (_) {
+        _activateLocalFallback();
       }
     }
 
-    return emitLocal();
+    yield _localGroups[groupId];
+    await for (final _ in _localChangeController.stream) {
+      yield _localGroups[groupId];
+    }
   }
 
   Future<ChatGroup> createGroup({
@@ -199,31 +212,38 @@ class GroupChatRepository {
       joinedAt: now,
     );
 
-    if (isFirebaseEnabled) {
-      final createdSnap = await _firestore!
-          .collection('groups')
-          .where('createdBy', isEqualTo: creatorId)
-          .get();
-      if (createdSnap.docs.length >= maxGroupsCreatedPerUser) {
-        throw const GroupChatException(
-          "You can create up to $maxGroupsCreatedPerUser groups.",
-        );
-      }
+    if (_shouldUseFirestoreFor(creatorId)) {
+      try {
+        final createdSnap = await _firestore!
+            .collection('groups')
+            .where('createdBy', isEqualTo: creatorId)
+            .get()
+            .timeout(const Duration(seconds: 4));
+        if (createdSnap.docs.length >= maxGroupsCreatedPerUser) {
+          throw const GroupChatException(
+            "You can create up to $maxGroupsCreatedPerUser groups.",
+          );
+        }
 
-      final docRef = _firestore.collection('groups').doc();
-      final group = ChatGroup(
-        id: docRef.id,
-        name: trimmedName,
-        description: finalDescription,
-        avatarColorValue: finalColor,
-        avatarEmoji: finalEmoji,
-        inviteCode: inviteCode,
-        createdBy: creatorId,
-        createdAt: now,
-        members: [adminMember],
-      );
-      await docRef.set(group.toMap());
-      return group;
+        final docRef = _firestore.collection('groups').doc();
+        final group = ChatGroup(
+          id: docRef.id,
+          name: trimmedName,
+          description: finalDescription,
+          avatarColorValue: finalColor,
+          avatarEmoji: finalEmoji,
+          inviteCode: inviteCode,
+          createdBy: creatorId,
+          createdAt: now,
+          members: [adminMember],
+        );
+        await docRef.set(group.toMap()).timeout(const Duration(seconds: 4));
+        return group;
+      } on GroupChatException {
+        rethrow;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
 
     final existingCreated =
@@ -308,16 +328,22 @@ class GroupChatRepository {
     _checkRequestRateLimit(userId);
 
     ChatGroup? group;
-    if (isFirebaseEnabled) {
-      final snap = await _firestore!
-          .collection('groups')
-          .where('inviteCode', isEqualTo: code)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) {
-        group = ChatGroup.fromMap(snap.docs.first.id, snap.docs.first.data());
+    if (_shouldUseFirestoreFor(userId)) {
+      try {
+        final snap = await _firestore!
+            .collection('groups')
+            .where('inviteCode', isEqualTo: code)
+            .limit(1)
+            .get()
+            .timeout(const Duration(seconds: 4));
+        if (snap.docs.isNotEmpty) {
+          group = ChatGroup.fromMap(snap.docs.first.id, snap.docs.first.data());
+        }
+      } catch (_) {
+        _activateLocalFallback();
       }
-    } else {
+    }
+    if (group == null) {
       for (final g in _localGroups.values) {
         if (g.inviteCode.toUpperCase() == code) {
           group = g;
@@ -495,12 +521,25 @@ class GroupChatRepository {
   }
 
   Future<ChatGroup> _getGroupOrThrow(String groupId) async {
+    if (_localGroups.containsKey(groupId)) {
+      return _localGroups[groupId]!;
+    }
     if (isFirebaseEnabled) {
-      final doc = await _firestore!.collection('groups').doc(groupId).get();
-      if (!doc.exists || doc.data() == null) {
-        throw const GroupChatException("Group not found.");
+      try {
+        final doc = await _firestore!
+            .collection('groups')
+            .doc(groupId)
+            .get()
+            .timeout(const Duration(seconds: 4));
+        if (!doc.exists || doc.data() == null) {
+          throw const GroupChatException("Group not found.");
+        }
+        return ChatGroup.fromMap(doc.id, doc.data()!);
+      } on GroupChatException {
+        rethrow;
+      } catch (_) {
+        _activateLocalFallback();
       }
-      return ChatGroup.fromMap(doc.id, doc.data()!);
     }
     final group = _localGroups[groupId];
     if (group == null) {
@@ -510,47 +549,65 @@ class GroupChatRepository {
   }
 
   Future<void> _saveGroup(ChatGroup group) async {
-    if (isFirebaseEnabled) {
-      await _firestore!.collection('groups').doc(group.id).set(group.toMap());
-    } else {
-      _localGroups[group.id] = group;
-      _notifyLocal();
+    if (isFirebaseEnabled && !_localGroups.containsKey(group.id)) {
+      try {
+        await _firestore!
+            .collection('groups')
+            .doc(group.id)
+            .set(group.toMap())
+            .timeout(const Duration(seconds: 4));
+        return;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
+    _localGroups[group.id] = group;
+    _notifyLocal();
   }
 
   Future<void> _deleteGroupInternal(String groupId) async {
-    if (isFirebaseEnabled) {
-      await _firestore!.collection('groups').doc(groupId).delete();
-    } else {
-      _localGroups.remove(groupId);
-      _localMessages.remove(groupId);
-      _notifyLocal();
+    if (isFirebaseEnabled && !_localGroups.containsKey(groupId)) {
+      try {
+        await _firestore!
+            .collection('groups')
+            .doc(groupId)
+            .delete()
+            .timeout(const Duration(seconds: 4));
+        return;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
+    _localGroups.remove(groupId);
+    _localMessages.remove(groupId);
+    _notifyLocal();
   }
 
   // ==================== MESSAGES ====================
 
-  Stream<List<GroupMessage>> watchMessages(String groupId) {
-    if (isFirebaseEnabled) {
-      return _firestore!
-          .collection('groups')
-          .doc(groupId)
-          .collection('messages')
-          .orderBy('timestamp', descending: false)
-          .snapshots()
-          .map((snap) => snap.docs
+  Stream<List<GroupMessage>> watchMessages(String groupId) async* {
+    if (isFirebaseEnabled && !_localGroups.containsKey(groupId)) {
+      try {
+        await for (final snap in _firestore!
+            .collection('groups')
+            .doc(groupId)
+            .collection('messages')
+            .orderBy('timestamp', descending: false)
+            .snapshots()) {
+          yield snap.docs
               .map((d) => GroupMessage.fromMap(d.id, d.data()))
-              .toList());
-    }
-
-    Stream<List<GroupMessage>> emitLocal() async* {
-      yield List<GroupMessage>.from(_localMessages[groupId] ?? const []);
-      await for (final _ in _localChangeController.stream) {
-        yield List<GroupMessage>.from(_localMessages[groupId] ?? const []);
+              .toList();
+        }
+        return;
+      } catch (_) {
+        _activateLocalFallback();
       }
     }
 
-    return emitLocal();
+    yield List<GroupMessage>.from(_localMessages[groupId] ?? const []);
+    await for (final _ in _localChangeController.stream) {
+      yield List<GroupMessage>.from(_localMessages[groupId] ?? const []);
+    }
   }
 
   Future<void> sendMessage({
@@ -575,21 +632,25 @@ class GroupChatRepository {
     _checkMessageRateLimit(senderId);
 
     final now = DateTime.now();
-    if (isFirebaseEnabled) {
-      final msgRef = _firestore!
-          .collection('groups')
-          .doc(groupId)
-          .collection('messages')
-          .doc();
-      final msg = GroupMessage(
-        id: msgRef.id,
-        senderId: senderId,
-        senderName: senderName.trim().isNotEmpty ? senderName.trim() : 'Member',
-        content: trimmed,
-        timestamp: now,
-      );
-      await msgRef.set(msg.toMap());
-      return;
+    if (_shouldUseFirestoreFor(senderId) && !_localGroups.containsKey(groupId)) {
+      try {
+        final msgRef = _firestore!
+            .collection('groups')
+            .doc(groupId)
+            .collection('messages')
+            .doc();
+        final msg = GroupMessage(
+          id: msgRef.id,
+          senderId: senderId,
+          senderName: senderName.trim().isNotEmpty ? senderName.trim() : 'Member',
+          content: trimmed,
+          timestamp: now,
+        );
+        await msgRef.set(msg.toMap()).timeout(const Duration(seconds: 4));
+        return;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
 
     final msg = GroupMessage(
@@ -607,49 +668,52 @@ class GroupChatRepository {
 
   // ==================== FRIENDS ====================
 
-  Stream<List<FriendEntry>> watchFriends(String userId) {
-    if (isFirebaseEnabled) {
-      return _firestore!
-          .collection('users')
-          .doc(userId)
-          .collection('friends')
-          .orderBy('addedAt', descending: true)
-          .snapshots()
-          .map((snap) =>
-              snap.docs.map((d) => FriendEntry.fromMap(d.data())).toList());
-    }
-
-    Stream<List<FriendEntry>> emitLocal() async* {
-      yield List<FriendEntry>.from(_localFriends[userId] ?? const []);
-      await for (final _ in _localChangeController.stream) {
-        yield List<FriendEntry>.from(_localFriends[userId] ?? const []);
+  Stream<List<FriendEntry>> watchFriends(String userId) async* {
+    if (_shouldUseFirestoreFor(userId)) {
+      try {
+        await for (final snap in _firestore!
+            .collection('users')
+            .doc(userId)
+            .collection('friends')
+            .orderBy('addedAt', descending: true)
+            .snapshots()) {
+          yield snap.docs.map((d) => FriendEntry.fromMap(d.data())).toList();
+        }
+        return;
+      } catch (_) {
+        _activateLocalFallback();
       }
     }
 
-    return emitLocal();
+    yield List<FriendEntry>.from(_localFriends[userId] ?? const []);
+    await for (final _ in _localChangeController.stream) {
+      yield List<FriendEntry>.from(_localFriends[userId] ?? const []);
+    }
   }
 
-  Stream<List<FriendRequest>> watchIncomingFriendRequests(String userId) {
-    if (isFirebaseEnabled) {
-      return _firestore!
-          .collection('users')
-          .doc(userId)
-          .collection('friend_requests')
-          .orderBy('createdAt', descending: true)
-          .snapshots()
-          .map((snap) => snap.docs
+  Stream<List<FriendRequest>> watchIncomingFriendRequests(String userId) async* {
+    if (_shouldUseFirestoreFor(userId)) {
+      try {
+        await for (final snap in _firestore!
+            .collection('users')
+            .doc(userId)
+            .collection('friend_requests')
+            .orderBy('createdAt', descending: true)
+            .snapshots()) {
+          yield snap.docs
               .map((d) => FriendRequest.fromMap(d.id, d.data()))
-              .toList());
-    }
-
-    Stream<List<FriendRequest>> emitLocal() async* {
-      yield List<FriendRequest>.from(_localFriendRequests[userId] ?? const []);
-      await for (final _ in _localChangeController.stream) {
-        yield List<FriendRequest>.from(_localFriendRequests[userId] ?? const []);
+              .toList();
+        }
+        return;
+      } catch (_) {
+        _activateLocalFallback();
       }
     }
 
-    return emitLocal();
+    yield List<FriendRequest>.from(_localFriendRequests[userId] ?? const []);
+    await for (final _ in _localChangeController.stream) {
+      yield List<FriendRequest>.from(_localFriendRequests[userId] ?? const []);
+    }
   }
 
   Future<void> sendFriendRequest({
@@ -668,42 +732,51 @@ class GroupChatRepository {
     _checkRequestRateLimit(fromUserId);
 
     final now = DateTime.now();
-    if (isFirebaseEnabled) {
-      final friendDoc = await _firestore!
-          .collection('users')
-          .doc(fromUserId)
-          .collection('friends')
-          .doc(targetUserId)
-          .get();
-      if (friendDoc.exists) {
-        throw const GroupChatException("You are already friends with this user.");
-      }
+    if (_shouldUseFirestoreFor(fromUserId)) {
+      try {
+        final friendDoc = await _firestore!
+            .collection('users')
+            .doc(fromUserId)
+            .collection('friends')
+            .doc(targetUserId)
+            .get()
+            .timeout(const Duration(seconds: 4));
+        if (friendDoc.exists) {
+          throw const GroupChatException("You are already friends with this user.");
+        }
 
-      final existingReq = await _firestore
-          .collection('users')
-          .doc(targetUserId)
-          .collection('friend_requests')
-          .doc(fromUserId)
-          .get();
-      if (existingReq.exists) {
-        throw const GroupChatException("Friend request already sent.");
-      }
+        final existingReq = await _firestore
+            .collection('users')
+            .doc(targetUserId)
+            .collection('friend_requests')
+            .doc(fromUserId)
+            .get()
+            .timeout(const Duration(seconds: 4));
+        if (existingReq.exists) {
+          throw const GroupChatException("Friend request already sent.");
+        }
 
-      final req = FriendRequest(
-        id: fromUserId,
-        fromUserId: fromUserId,
-        fromDisplayName:
-            fromDisplayName.trim().isNotEmpty ? fromDisplayName.trim() : 'User',
-        toUserId: targetUserId,
-        createdAt: now,
-      );
-      await _firestore
-          .collection('users')
-          .doc(targetUserId)
-          .collection('friend_requests')
-          .doc(fromUserId)
-          .set(req.toMap());
-      return;
+        final req = FriendRequest(
+          id: fromUserId,
+          fromUserId: fromUserId,
+          fromDisplayName:
+              fromDisplayName.trim().isNotEmpty ? fromDisplayName.trim() : 'User',
+          toUserId: targetUserId,
+          createdAt: now,
+        );
+        await _firestore
+            .collection('users')
+            .doc(targetUserId)
+            .collection('friend_requests')
+            .doc(fromUserId)
+            .set(req.toMap())
+            .timeout(const Duration(seconds: 4));
+        return;
+      } on GroupChatException {
+        rethrow;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
 
     final myFriends = _localFriends[fromUserId] ?? [];
@@ -744,33 +817,37 @@ class GroupChatRepository {
       addedAt: now,
     );
 
-    if (isFirebaseEnabled) {
-      final batch = _firestore!.batch();
-      batch.set(
-        _firestore
-            .collection('users')
-            .doc(currentUserId)
-            .collection('friends')
-            .doc(request.fromUserId),
-        friendForMe.toMap(),
-      );
-      batch.set(
-        _firestore
-            .collection('users')
-            .doc(request.fromUserId)
-            .collection('friends')
-            .doc(currentUserId),
-        meForFriend.toMap(),
-      );
-      batch.delete(
-        _firestore
-            .collection('users')
-            .doc(currentUserId)
-            .collection('friend_requests')
-            .doc(request.id),
-      );
-      await batch.commit();
-      return;
+    if (_shouldUseFirestoreFor(currentUserId)) {
+      try {
+        final batch = _firestore!.batch();
+        batch.set(
+          _firestore
+              .collection('users')
+              .doc(currentUserId)
+              .collection('friends')
+              .doc(request.fromUserId),
+          friendForMe.toMap(),
+        );
+        batch.set(
+          _firestore
+              .collection('users')
+              .doc(request.fromUserId)
+              .collection('friends')
+              .doc(currentUserId),
+          meForFriend.toMap(),
+        );
+        batch.delete(
+          _firestore
+              .collection('users')
+              .doc(currentUserId)
+              .collection('friend_requests')
+              .doc(request.id),
+        );
+        await batch.commit().timeout(const Duration(seconds: 4));
+        return;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
 
     final myFriends = _localFriends[currentUserId] ?? [];
@@ -794,14 +871,19 @@ class GroupChatRepository {
     required String currentUserId,
     required String requestId,
   }) async {
-    if (isFirebaseEnabled) {
-      await _firestore!
-          .collection('users')
-          .doc(currentUserId)
-          .collection('friend_requests')
-          .doc(requestId)
-          .delete();
-      return;
+    if (_shouldUseFirestoreFor(currentUserId)) {
+      try {
+        await _firestore!
+            .collection('users')
+            .doc(currentUserId)
+            .collection('friend_requests')
+            .doc(requestId)
+            .delete()
+            .timeout(const Duration(seconds: 4));
+        return;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
     _localFriendRequests[currentUserId] =
         (_localFriendRequests[currentUserId] ?? [])
@@ -814,24 +896,28 @@ class GroupChatRepository {
     required String currentUserId,
     required String friendUserId,
   }) async {
-    if (isFirebaseEnabled) {
-      final batch = _firestore!.batch();
-      batch.delete(
-        _firestore
-            .collection('users')
-            .doc(currentUserId)
-            .collection('friends')
-            .doc(friendUserId),
-      );
-      batch.delete(
-        _firestore
-            .collection('users')
-            .doc(friendUserId)
-            .collection('friends')
-            .doc(currentUserId),
-      );
-      await batch.commit();
-      return;
+    if (_shouldUseFirestoreFor(currentUserId)) {
+      try {
+        final batch = _firestore!.batch();
+        batch.delete(
+          _firestore
+              .collection('users')
+              .doc(currentUserId)
+              .collection('friends')
+              .doc(friendUserId),
+        );
+        batch.delete(
+          _firestore
+              .collection('users')
+              .doc(friendUserId)
+              .collection('friends')
+              .doc(currentUserId),
+        );
+        await batch.commit().timeout(const Duration(seconds: 4));
+        return;
+      } catch (_) {
+        _activateLocalFallback();
+      }
     }
 
     _localFriends[currentUserId] = (_localFriends[currentUserId] ?? [])
