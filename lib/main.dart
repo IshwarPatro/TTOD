@@ -15,7 +15,8 @@ import 'features/auth/domain/repositories/auth_repository.dart';
 import 'features/auth/presentation/bloc/auth_bloc.dart';
 import 'features/auth/presentation/pages/sign_in_screen.dart';
 import 'features/community/data/repositories/firestore_community_repository.dart';
-import 'features/community/presentation/pages/community_tab.dart';
+import 'features/group_chat/data/repositories/group_chat_repository.dart';
+import 'features/group_chat/presentation/pages/groups_tab.dart';
 import 'features/hydration/presentation/bloc/hydration_bloc.dart';
 import 'features/period_tracker/data/datasources/period_local_datasource.dart';
 import 'features/period_tracker/data/models/cycle_model.dart';
@@ -80,12 +81,14 @@ void main() async {
 
   final authRepository = FirebaseAuthRepository();
   final communityRepository = FirestoreCommunityRepository();
+  final groupChatRepository = GroupChatRepository();
 
   runApp(MyApp(
     periodRepository: periodRepository,
     profileRepository: profileRepository,
     authRepository: authRepository,
     communityRepository: communityRepository,
+    groupChatRepository: groupChatRepository,
   ));
 }
 
@@ -94,6 +97,7 @@ class MyApp extends StatelessWidget {
   final ProfileRepositoryImpl profileRepository;
   final AuthRepository authRepository;
   final FirestoreCommunityRepository communityRepository;
+  final GroupChatRepository? groupChatRepository;
 
   const MyApp({
     super.key,
@@ -101,6 +105,7 @@ class MyApp extends StatelessWidget {
     required this.profileRepository,
     required this.authRepository,
     required this.communityRepository,
+    this.groupChatRepository,
   });
 
   @override
@@ -109,6 +114,9 @@ class MyApp extends StatelessWidget {
       providers: [
         RepositoryProvider<AuthRepository>(create: (_) => authRepository),
         RepositoryProvider<FirestoreCommunityRepository>(create: (_) => communityRepository),
+        RepositoryProvider<GroupChatRepository>(
+          create: (_) => groupChatRepository ?? GroupChatRepository(),
+        ),
       ],
       child: MultiBlocProvider(
         providers: [
@@ -265,13 +273,13 @@ class _AppMainShellState extends State<AppMainShell> {
 
   static const List<String> _titles = [
     "Cycle",
-    "Community",
+    "Groups",
     "Profile",
   ];
 
   static const List<Widget> _tabs = [
     PeriodTrackerTab(),
-    CommunityTab(),
+    GroupsTab(),
     ProfileTab(),
   ];
 
@@ -344,9 +352,9 @@ class _AppMainShellState extends State<AppMainShell> {
               label: "Cycle",
             ),
             NavigationDestination(
-              icon: Icon(Icons.forum_outlined, color: AppColors.onSurfaceVariant),
-              selectedIcon: Icon(Icons.forum, color: AppColors.periodRose),
-              label: "Community",
+              icon: Icon(Icons.groups_outlined, color: AppColors.onSurfaceVariant),
+              selectedIcon: Icon(Icons.groups, color: AppColors.periodRose),
+              label: "Groups",
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline, color: AppColors.onSurfaceVariant),
