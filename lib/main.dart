@@ -17,7 +17,6 @@ import 'features/auth/presentation/pages/sign_in_screen.dart';
 import 'features/community/data/repositories/firestore_community_repository.dart';
 import 'features/community/presentation/pages/community_tab.dart';
 import 'features/hydration/presentation/bloc/hydration_bloc.dart';
-import 'features/nutrients/presentation/pages/nutrients_tab.dart';
 import 'features/period_tracker/data/datasources/period_local_datasource.dart';
 import 'features/period_tracker/data/models/cycle_model.dart';
 import 'features/period_tracker/data/models/daily_log_model.dart';
@@ -266,14 +265,12 @@ class _AppMainShellState extends State<AppMainShell> {
 
   static const List<String> _titles = [
     "Cycle",
-    "Nutrition",
     "Community",
     "Profile",
   ];
 
   static const List<Widget> _tabs = [
     PeriodTrackerTab(),
-    NutrientsTab(),
     CommunityTab(),
     ProfileTab(),
   ];
@@ -345,11 +342,6 @@ class _AppMainShellState extends State<AppMainShell> {
               icon: Icon(Icons.calendar_month_outlined, color: AppColors.onSurfaceVariant),
               selectedIcon: Icon(Icons.calendar_month, color: AppColors.periodRose),
               label: "Cycle",
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.restaurant_outlined, color: AppColors.onSurfaceVariant),
-              selectedIcon: Icon(Icons.restaurant, color: AppColors.periodRose),
-              label: "Nutrition",
             ),
             NavigationDestination(
               icon: Icon(Icons.forum_outlined, color: AppColors.onSurfaceVariant),
