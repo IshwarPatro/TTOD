@@ -1,16 +1,11 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../../../period_tracker/data/models/cycle_model.dart';
 import '../../../period_tracker/presentation/bloc/period_bloc.dart';
 import '../../../period_tracker/presentation/bloc/period_event.dart';
 import '../../../period_tracker/presentation/bloc/period_state.dart';
-import '../../data/models/profile_model.dart';
 import '../bloc/profile_bloc.dart';
 
 class ProfileTab extends StatefulWidget {
@@ -66,114 +61,6 @@ class _ProfileTabState extends State<ProfileTab> {
     if (picked != null) {
       setState(() => _dateOfBirth = picked);
     }
-  }
-
-  void _exportLocalBackup(BuildContext context) {
-    final listCycles = <Map<String, dynamic>>[];
-    if (Hive.isBoxOpen('cycles_box')) {
-      final cyclesBox = Hive.box<CycleModel>('cycles_box');
-      for (int i = 0; i < cyclesBox.length; i++) {
-        final cycle = cyclesBox.getAt(i);
-        if (cycle != null) {
-          listCycles.add({
-            "id": cycle.id,
-            "start_date": cycle.startDate.toIso8601String(),
-            "end_date": cycle.endDate.toIso8601String(),
-            "intensity": cycle.flowIntensity.name,
-            "symptoms": cycle.symptoms,
-          });
-        }
-      }
-    }
-
-    ProfileModel? profileData;
-    if (Hive.isBoxOpen('profile_box')) {
-      final profileBox = Hive.box<ProfileModel>('profile_box');
-      if (profileBox.isNotEmpty) {
-        profileData = profileBox.values.first;
-      }
-    }
-
-    final backup = {
-      "backup_version": "1.0",
-      "exported_at": DateTime.now().toIso8601String(),
-      "profile": profileData == null
-          ? null
-          : {
-              "name": profileData.name,
-              "dob": profileData.dateOfBirth.toIso8601String(),
-              "average_cycle_length": profileData.averageCycleLengthInput,
-            },
-      "cycles": listCycles,
-    };
-
-    final prettyJson = const JsonEncoder.withIndent('  ').convert(backup);
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: AppColors.cardBackground,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text(
-            "Backup Data",
-            style: GoogleFonts.sora(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.onBackground),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                "Copy your local data below to keep a personal backup.",
-                style: GoogleFonts.inter(fontSize: 13, color: AppColors.onSurfaceVariant),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                constraints: const BoxConstraints(maxHeight: 200),
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.background,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.outline),
-                ),
-                child: SingleChildScrollView(
-                  child: SelectableText(
-                    prettyJson,
-                    style: GoogleFonts.jetBrainsMono(fontSize: 11, color: AppColors.onBackground),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text("Close", style: GoogleFonts.inter(color: AppColors.onSurfaceVariant)),
-            ),
-            ElevatedButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: prettyJson));
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Backup copied to clipboard.")),
-                  );
-                }
-              },
-              icon: const Icon(Icons.copy, size: 16),
-              label: Text("Copy", style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryAccent,
-                foregroundColor: AppColors.onPrimary,
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _confirmResetData(BuildContext context) {
@@ -440,7 +327,7 @@ class _ProfileTabState extends State<ProfileTab> {
               ),
               const SizedBox(height: 16),
 
-              // Data & Account Actions
+              // Account Actions
               Container(
                 decoration: BoxDecoration(
                   color: AppColors.cardBackground,
@@ -449,14 +336,6 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 child: Column(
                   children: [
-                    ListTile(
-                      leading: const Icon(Icons.download_outlined, color: AppColors.onBackground),
-                      title: Text("Backup Data", style: GoogleFonts.inter(fontWeight: FontWeight.w500, fontSize: 14)),
-                      subtitle: Text("Export your cycles as JSON", style: GoogleFonts.inter(fontSize: 12, color: AppColors.onSurfaceVariant)),
-                      trailing: const Icon(Icons.chevron_right, color: AppColors.onSurfaceVariant),
-                      onTap: () => _exportLocalBackup(context),
-                    ),
-                    const Divider(color: AppColors.outlineVariant, height: 1, indent: 16, endIndent: 16),
                     ListTile(
                       leading: const Icon(Icons.logout, color: AppColors.onBackground),
                       title: Text("Sign Out", style: GoogleFonts.inter(fontWeight: FontWeight.w500, fontSize: 14)),
