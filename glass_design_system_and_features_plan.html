@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phase-by-Phase Technical Design & Implementation Plan</title>
+    <style>
+        :root {
+            --bg-base: #FFF4BF;
+            --glass-surface: rgba(255, 190, 251, 0.35);
+            --border-highlight: rgba(220, 149, 255, 0.6);
+            --primary-accent: #DC95FF;
+            --secondary-accent: #8C56D4;
+            --text-dark: #23143D;
+            --text-muted: #6E568F;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-dark);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+
+        header {
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            color: var(--secondary-accent);
+            margin-bottom: 10px;
+        }
+
+        p.subtitle {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            margin: 0;
+        }
+
+        .glass-card {
+            background: var(--glass-surface);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-highlight);
+            border-radius: 24px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px 0 rgba(140, 86, 212, 0.1);
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            color: var(--secondary-accent);
+            margin-top: 0;
+            border-bottom: 2px solid var(--border-highlight);
+            padding-bottom: 8px;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            color: var(--text-dark);
+            margin-top: 24px;
+        }
+
+        code {
+            background: rgba(140, 86, 212, 0.08);
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            color: var(--secondary-accent);
+        }
+
+        pre {
+            background: rgba(35, 20, 61, 0.95);
+            color: #FFF4BF;
+            padding: 16px;
+            border-radius: 16px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.85em;
+            border: 1px solid var(--primary-accent);
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .badge {
+            display: inline-block;
+            background: var(--primary-accent);
+            color: var(--text-dark);
+            padding: 4px 10px;
+            border-radius: 99px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <span class="badge">SPECIFICATION</span>
+            <h1>Technical Design & Implementation Plan</h1>
+            <p class="subtitle">Phase-by-phase design document for Firebase Authentication, Social Forums, Offline LLM integration, and AI Profile image generators.</p>
+        </header>
+
+        <!-- Design System Card -->
+        <div class="glass-card">
+            <h2>🎨 Liquid Glass Design System</h2>
+            <p>A translucent glass design system utilizing light refraction, blur, and color overlay tokens.</p>
+            <ul>
+                <li><strong>Base Palette:</strong> Cream-Yellow (<code>#FFF4BF</code>), Lavender (<code>#FFBEFB</code>), Lilac (<code>#DC95FF</code>), and Deep Amethyst (<code>#8C56D4</code>).</li>
+                <li><strong>Specular Highlights:</strong> Accomplished by applying 1.5px borders of <code>#DC95FF</code> with opacity to card edges.</li>
+                <li><strong>Refraction Backdrop:</strong> Utilizing real-time <code>BackdropFilter</code> with 18px blur sigma overlaying <code>#FFBEFB</code> with 35% opacity.</li>
+            </ul>
+        </div>
+
+        <!-- Phase 1 Card -->
+        <div class="glass-card">
+            <span class="badge">Phase 1</span>
+            <h2>Firebase Auth & Social Forums</h2>
+            <p>Deploy secure signup/login workflows and a lightweight anonymous social forum for community blogs, liking, commenting, and chat rooms.</p>
+            
+            <h3>1. JSON Firestore Database Scheme</h3>
+            <pre>
+// Collection `/users`
+{
+  "uid": "UID_12345",
+  "display_name": "RosyVibe",
+  "avatar_url": "https://storage.googleapis/.../avatar.png",
+  "birth_date": "1998-06-15T00:00:00.000Z",
+  "created_at": "2026-08-12T23:12:43.000Z"
+}
+
+// Collection `/posts`
+{
+  "post_id": "POST_5678",
+  "author_uid": "UID_12345",
+  "author_name": "RosyVibe",
+  "author_avatar": "https://...",
+  "content": "Sipping warm dandelion tea today to reduce luteal bloating!",
+  "likes": ["UID_user2", "UID_user3"],
+  "comments_count": 1,
+  "created_at": "2026-08-12T23:14:00.000Z"
+}</pre>
+        </div>
+
+        <!-- Phase 2 Card -->
+        <div class="glass-card">
+            <span class="badge">Phase 2</span>
+            <h2>True Offline AI Chatbot Model</h2>
+            <p>Deploy a fine-tuned, quantized Large Language Model running fully on-device on client resources, avoiding cloud billing dependencies.</p>
+            
+            <h3>1. Model Training Flow</h3>
+            <ul>
+                <li><strong>Model Base:</strong> Use high-performance ultra-small models: <code>Llama-3.2-1B-Instruct</code> or <code>Gemma-2B-IT</code>.</li>
+                <li><strong>Domain Fine-Tuning:</strong> Build a custom dataset of 5,000 wellness cycles conversation-answer pairs. Train utilizing QLoRA adapters.</li>
+                <li><strong>Model Quantization:</strong> Quantize the PyTorch model weights down to 4-bit (<code>Q4_K_M</code> GGUF) via <code>llama.cpp</code> toolchain. This reduces size to ~850MB, making local loading fluid.</li>
+            </ul>
+
+            <h3>2. On-Device Execution</h3>
+            <p>Utilize <code>llama.cpp</code> native bindings via <code>flutter_rust_bridge</code> to run GGUF query inference directly in C/C++/Rust on the mobile device GPU/CPU.</p>
+        </div>
+
+        <!-- Phase 3 Card -->
+        <div class="glass-card">
+            <span class="badge">Phase 3</span>
+            <h2>AI Profile Photo Generator</h2>
+            <p>Generate highly stylized profile illustrations from text prompts using an authenticated text-to-image API.</p>
+            
+            <h3>Implementation Blueprint</h3>
+            <ul>
+                <li><strong>Training custom LoRA:</strong> Compile a static dataset of 30-50 illustrations showing a unified vector wellness art style. Train a LoRA adapter on top of <code>Stable Diffusion XL (SDXL)</code>.</li>
+                <li><strong>Serverless Hosting:</strong> Host the adapter and base model on Replicate or Fal.ai serverless GPUs.</li>
+                <li><strong>Storage integration:</strong> Wrap user submission prompts inside a default style filter. Send requests, fetch the png output, save it in <code>Firebase Storage</code>, and reference the URL inside the user's Firestore index.</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
